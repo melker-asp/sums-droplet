@@ -77,21 +77,23 @@ enum SheetStyler {
 
     /// Restyles the whole text. `tokens[i]` colours line `i`.
     static func apply(to storage: NSTextStorage, tokens: [[SyntaxToken]]) {
-        let text = storage.string as NSString
-        storage.beginEditing()
-        storage.setAttributes(typingAttributes, range: NSRange(location: 0, length: text.length))
+        // Work on a native copy. The storage's string is bridged from
+        // Objective-C, and every Swift string operation on a bridged string
+        // takes a slow path; styling a sheet that way froze the shelf.
+        var text = storage.string
+        text.makeContiguousUTF8()
+        let length = storage.length
 
-        var location = 0
-        var lineIndex = 0
+        storage.beginEditing()
+        storage.setAttributes(typingAttributes, range: NSRange(location: 0, length: length))
+
+        var offset = 0
         var inCodeFence = false
-        while location <= text.length {
-            let lineRange = text.lineRange(for: NSRange(location: location, length: 0))
-            var content = lineRange
-            while content.length > 0, let last = text.substring(with: NSRange(location: NSMaxRange(content) - 1, length: 1)).unicodeScalars.first,
-                  CharacterSet.newlines.contains(last) {
-                content.length -= 1
-            }
-            let line = text.substring(with: content)
+        for (lineIndex, substring) in text.split(separator: "\n", omittingEmptySubsequences: false).enumerated() {
+            let line = String(substring)
+            let content = NSRange(location: offset, length: line.utf16.count)
+            offset = NSMaxRange(content) + 1
+            guard NSMaxRange(content) <= length else { break }
             let trimmed = line.trimmingCharacters(in: .whitespaces)
 
             if trimmed.hasPrefix("```") || trimmed.hasPrefix("~~~") {
@@ -109,10 +111,6 @@ enum SheetStyler {
                 }
                 styleInline(line, at: content.location, in: storage)
             }
-
-            lineIndex += 1
-            guard lineRange.length > 0 else { break }
-            location = NSMaxRange(lineRange)
         }
         storage.endEditing()
     }

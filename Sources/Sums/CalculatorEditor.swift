@@ -92,7 +92,7 @@ struct CalculatorEditor: NSViewRepresentable {
         }
         if needsRestyle || coordinator.tokens != document.tokens {
             coordinator.tokens = document.tokens
-            textView.restyle(tokens: document.tokens)
+            coordinator.scheduleRestyle(of: textView)
         }
         if focusRequest != coordinator.lastFocusRequest {
             coordinator.lastFocusRequest = focusRequest
@@ -114,8 +114,23 @@ struct CalculatorEditor: NSViewRepresentable {
         /// the view reports back are echoes rather than the user's.
         var isUpdating = false
 
+        private var restyleIsScheduled = false
+
         init(parent: CalculatorEditor) {
             self.parent = parent
+        }
+
+        /// Restyles after the current SwiftUI pass rather than inside it.
+        /// Restyling changes the text layout, and doing that from within a
+        /// layout pass let the host's layout re-enter the editor.
+        func scheduleRestyle(of textView: SumsTextView) {
+            guard !restyleIsScheduled else { return }
+            restyleIsScheduled = true
+            Task { @MainActor [weak self, weak textView] in
+                guard let self else { return }
+                self.restyleIsScheduled = false
+                textView?.restyle(tokens: self.tokens)
+            }
         }
 
         func textDidChange(_ notification: Notification) {
@@ -200,10 +215,18 @@ final class SumsTextView: NSTextView {
     /// composing a character, which restyling would interrupt.
     func restyle(tokens: [[SyntaxToken]]) {
         guard let textStorage, !hasMarkedText() else { return }
+        // Styling relays out every line, so never redo identical work.
+        let text = string
+        guard text != styledText || tokens != styledTokens else { return }
         SheetStyler.apply(to: textStorage, tokens: tokens)
+        styledText = text
+        styledTokens = tokens
         typingAttributes = SheetStyler.typingAttributes
         needsDisplay = true
     }
+
+    private var styledText: String?
+    private var styledTokens: [[SyntaxToken]] = []
 
     // MARK: Focus and keys
 
