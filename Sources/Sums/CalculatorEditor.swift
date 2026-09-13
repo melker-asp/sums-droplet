@@ -155,7 +155,9 @@ final class SumsTextView: NSTextView {
 
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
-        updateExclusion()
+        // The column's cap is a share of the width, and the first results
+        // arrive before the view has any width at all.
+        resizeAnswerColumn()
     }
 
     override func didChangeText() {
