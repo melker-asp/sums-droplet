@@ -201,3 +201,17 @@ opens getdroppy.app/submit-droplet with the repository, commit and id filled in.
   mistake starts a layout loop that pins a core (the harness hangs on `--shots`).
 - **Licensing:** SoulverCore is free for personal use. Publishing needs Soulver's
   licence (they offer a free one with attribution); ask them before submitting.
+- **Sums syntax** (`SheetSyntax`): `^anchor` and `@reference`, finance calls with `;`
+  between arguments, tables and chart lines. The engine hides them from SoulverCore
+  and fills in their values after a first pass, like aggregates. Percentages go back
+  unbracketed: SoulverCore reads `8,9 %` but not `(8,9 %)`.
+- **Shared variables** are declared on hidden lines above a sheet (`offset` in
+  `SheetEngine`). SoulverCore's `VariableList` drops `kr` and `SEK` units, and giving
+  variables definitions breaks them; hidden lines keep units. Every sheet-to-collection
+  index adds `offset`.
+- **Notch surfaces:** quick calc and full-sheet mode are expanded surfaces the droplet
+  provides itself (`ExpandedSurfaceHosting` returns `self`). Compare dismissals by
+  presentation id, never surface id.
+- **Seeing the editor:** `SUMS_RENDER_PATH=/tmp/editor.png swift test --filter
+  EditorRenderTests` draws every kind of line off screen to a PNG. The harness shot
+  only shows the top of a sheet.

@@ -307,19 +307,31 @@ private struct SheetRow: View {
 
 // MARK: - Sheet editor
 
-private struct SheetEditorView: View {
+/// One sheet: its title, the editor or its inputs, and the stats of the
+/// selection. On the shelf card it has a back arrow to the list; in
+/// full-sheet mode the sidebar replaces that, and it can collapse back.
+struct SheetEditorView: View {
     @ObservedObject var droplet: SumsDroplet
     @ObservedObject var store: SheetStore
     @ObservedObject var document: SheetDocument
     let isPreview: Bool
+    let isExpanded: Bool
 
     @State private var titleDraft = ""
     @State private var showsInputs = false
     @FocusState private var titleFocused: Bool
 
+    init(droplet: SumsDroplet, store: SheetStore, document: SheetDocument, isPreview: Bool, isExpanded: Bool = false) {
+        self.droplet = droplet
+        self.store = store
+        self.document = document
+        self.isPreview = isPreview
+        self.isExpanded = isExpanded
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: DroppySpacing.xsm) {
-            CardHeader(onBack: { commitTitle(); droplet.showList() }, title: { titleField }) {
+            CardHeader(onBack: isExpanded ? nil : { commitTitle(); droplet.showList() }, title: { titleField }) {
                 IconButton(
                     systemImage: showsInputs ? "text.alignleft" : "slider.horizontal.3",
                     label: showsInputs ? "Show the sheet" : "Show inputs"
@@ -328,6 +340,17 @@ private struct SheetEditorView: View {
                 }
                 IconButton(systemImage: "doc.on.doc", label: "Copy sheet with answers") { droplet.copySheet() }
                 moreMenu
+                if isExpanded {
+                    IconButton(systemImage: "arrow.down.right.and.arrow.up.left", label: "Back to the shelf") {
+                        commitTitle()
+                        droplet.dismissFullSheet()
+                    }
+                } else {
+                    IconButton(systemImage: "arrow.up.left.and.arrow.down.right", label: "Full-sheet mode") {
+                        commitTitle()
+                        droplet.presentFullSheet()
+                    }
+                }
             }
             if showsInputs {
                 InputsView(droplet: droplet, document: document)
@@ -344,7 +367,10 @@ private struct SheetEditorView: View {
                         copyText: { droplet.copyText($0, message: $1) },
                         showMessage: { droplet.showToast($0) },
                         focusChanged: { droplet.editorFocusChanged($0) },
-                        back: { commitTitle(); droplet.showList() },
+                        back: {
+                            commitTitle()
+                            if isExpanded { droplet.dismissFullSheet() } else { droplet.showList() }
+                        },
                         newSheet: { droplet.showNewSheet() }
                     )
                 )

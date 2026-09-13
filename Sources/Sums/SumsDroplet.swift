@@ -65,8 +65,13 @@ public final class SumsDroplet: NSObject, ObservableObject, Droplet {
     /// Set when a shared sheet changed, so the next navigation recomputes
     /// the variables every sheet sees.
     private var globalsAreStale = false
+    /// The one-line calculator a shortcut opens in the notch.
+    let quickCalc = QuickCalc()
+    private var quickCalcPresentation: ExpandedSurfacePresentation?
+    private var fullSheetPresentation: ExpandedSurfacePresentation?
 
     private static let lastOpenedKey = "lastOpenedSheetID"
+    private static let quickCalcHistoryKey = "quickCalcHistory"
 
     // MARK: Lifecycle
 
@@ -82,6 +87,7 @@ public final class SumsDroplet: NSObject, ObservableObject, Droplet {
         }
         applyEngineConfiguration()
         startRatesUpdates()
+        quickCalc.restore(history: host.preferences.value(forKey: Self.quickCalcHistoryKey, as: [String].self) ?? [])
         if settings.opensLastSheet, let id = liveSheet(lastOpenedID) {
             open(id, focus: false)
         } else {
@@ -103,6 +109,13 @@ public final class SumsDroplet: NSObject, ObservableObject, Droplet {
         ) { [weak self] in
             self?.newQuickCalc()
         }
+        host.shortcuts.register(
+            id: "quick-calc",
+            title: "Quick calc in the notch",
+            defaultShortcut: DropletKeyboardShortcut(keyCode: 49, modifiers: modifiers) // Space
+        ) { [weak self] in
+            self?.presentQuickCalc()
+        }
 
         store.$revision
             .sink { [weak self] _ in self?.publishLockScreen() }
@@ -118,6 +131,9 @@ public final class SumsDroplet: NSObject, ObservableObject, Droplet {
         toastTask = nil
         ratesTask?.cancel()
         ratesTask = nil
+        // The host takes presented surfaces down with the droplet.
+        quickCalcPresentation = nil
+        fullSheetPresentation = nil
         cancellables.removeAll()
         lockScreenSubject.send(nil)
         _ = host?.shelf.setHoldsOpen(false)
@@ -303,8 +319,12 @@ public final class SumsDroplet: NSObject, ObservableObject, Droplet {
         guard let host, let id = pinnedSheetID, let summary = summary(for: id),
               host.workspace.copyToPasteboard(summary.raw)
         else { return }
-        let shown = summary.formatted
-        _ = host.hud.present(
+        presentCopiedHUD(summary.formatted)
+    }
+
+    /// "Copied" in the notch: the glyph at one edge, the value at the other.
+    private func presentCopiedHUD(_ shown: String) {
+        _ = host?.hud.present(
             DropletHUDRequest(id: "sums.copied", duration: 1.5, accessibilityLabel: "Copied \(shown)") {
                 HStack(spacing: 0) {
                     Image(systemName: "doc.on.doc")
@@ -401,6 +421,7 @@ public final class SumsDroplet: NSObject, ObservableObject, Droplet {
         document.configure(settings, currencyRates: rates, globals: globals)
         summaryEngine.configure(settings, currencyRates: rates)
         summaryEngine.setGlobals(globals)
+        quickCalc.configure(settings, currencyRates: rates, globals: globals)
         summaries.removeAll()
         globalsAreStale = false
         publishLockScreen()
@@ -509,5 +530,146 @@ extension SumsDroplet: SettingsPaneProviding {
 extension SumsDroplet: LockScreenStatusProviding {
     public var lockScreenStatus: AnyPublisher<LockScreenStatusEntry?, Never> {
         lockScreenSubject.eraseToAnyPublisher()
+    }
+}
+
+// MARK: - Notch surfaces
+
+extension SumsDroplet: ExpandedSurfaceHosting {
+    public var expandedSurfaceProvider: (any ExpandedSurfaceProviding)? { self }
+}
+
+extension SumsDroplet: ExpandedSurfaceProviding {
+    static let quickCalcSurface: ExpandedSurfaceID = "quick-calc"
+    static let fullSheetSurface: ExpandedSurfaceID = "full-sheet"
+
+    public var expandedSurfaces: [ExpandedSurfaceDescriptor] {
+        [
+            ExpandedSurfaceDescriptor(
+                id: Self.quickCalcSurface,
+                title: "Quick calc",
+                systemImage: "sum",
+                suppresses: [.shelfWidgets, .notificationBanners]
+            ),
+            ExpandedSurfaceDescriptor(
+                id: Self.fullSheetSurface,
+                title: "Sums",
+                systemImage: "sum",
+                // Longer work: nothing else on the shelf, and it stays put
+                // when the pointer wanders. A click outside still closes it.
+                suppresses: [.shelfWidgets, .favoritesBar, .floatingNavLane, .notificationBanners, .autoCollapse]
+            )
+        ]
+    }
+
+    public func makeExpandedSurfaceView(_ id: ExpandedSurfaceID, context: ExpandedSurfaceContext) -> AnyView {
+        switch id {
+        case Self.quickCalcSurface:
+            return AnyView(QuickCalcView(
+                model: quickCalc,
+                isPreview: context.isPreview,
+                onCopy: { [weak self] in self?.quickCalcCopy() },
+                onAddToSheet: { [weak self] in self?.quickCalcAddToSheet() },
+                onClose: { [weak self] in self?.closeQuickCalc() }
+            ))
+        case Self.fullSheetSurface:
+            return AnyView(FullSheetView(droplet: self, store: store, document: document, isPreview: context.isPreview))
+        default:
+            return AnyView(EmptyView())
+        }
+    }
+
+    public func expandedSurfaceSize(_ id: ExpandedSurfaceID, fitting proposal: ExpandedSurfaceSizeProposal) -> CGSize? {
+        switch id {
+        case Self.quickCalcSurface:
+            return CGSize(width: max(proposal.standardSize.width, 480), height: 58)
+        case Self.fullSheetSurface:
+            return CGSize(width: min(proposal.maximumSize.width, 880), height: min(proposal.maximumSize.height, 520))
+        default:
+            return nil
+        }
+    }
+
+    public func expandedSurfaceDidDismiss(
+        _ id: ExpandedSurfaceID,
+        presentation: ExpandedSurfacePresentation,
+        reason: ExpandedSurfaceDismissalReason
+    ) {
+        // Compared by presentation, not surface: a late teardown must not
+        // clear a surface the user has already summoned again.
+        if presentation.id == quickCalcPresentation?.id {
+            quickCalcPresentation = nil
+            quickCalc.reset()
+        }
+        if presentation.id == fullSheetPresentation?.id {
+            fullSheetPresentation = nil
+            _ = host?.shelf.setHoldsOpen(false)
+        }
+    }
+
+    // MARK: Quick calc
+
+    /// The shortcut: a one-line calculator in the notch, ready to type in.
+    func presentQuickCalc() {
+        guard let host else { return }
+        quickCalc.reset()
+        quickCalcPresentation = host.notchSurface.presentExpandedSurface(
+            ExpandedSurfacePresentationRequest(surfaceID: Self.quickCalcSurface, opensShelf: true)
+        )
+        if quickCalcPresentation == nil { host.log.info("quick calc: the host refused the surface") }
+    }
+
+    /// ⏎: copies the answer as a plain number and closes.
+    func quickCalcCopy() {
+        guard let host, let result = quickCalc.result, host.workspace.copyToPasteboard(result.raw) else { return }
+        rememberQuickCalc()
+        closeQuickCalc()
+        presentCopiedHUD(result.formatted)
+    }
+
+    /// ⇥: adds the calculation to the last sheet and closes.
+    func quickCalcAddToSheet() {
+        let calculation = quickCalc.input.trimmingCharacters(in: .whitespaces)
+        guard !calculation.isEmpty else { return }
+        let id = liveSheet(lastOpenedID) ?? createSheet(from: nil, opening: false).id
+        var text = store.text(id)
+        if !text.isEmpty, !text.hasSuffix("\n") { text += "\n" }
+        text += calculation
+        store.updateText(id, text)
+        if document.sheetID == id { document.update(text) }
+        rememberQuickCalc()
+        closeQuickCalc()
+        showToast("Added to “\(store.displayTitle(id))”")
+    }
+
+    func closeQuickCalc() {
+        host?.notchSurface.dismissExpandedSurface(Self.quickCalcSurface)
+    }
+
+    private func rememberQuickCalc() {
+        quickCalc.remember()
+        host?.preferences.setValue(quickCalc.history, forKey: Self.quickCalcHistoryKey)
+    }
+
+    // MARK: Full-sheet mode
+
+    var isFullSheetPresented: Bool { fullSheetPresentation != nil }
+
+    /// Takes the notch over with the sheet list and the editor side by side.
+    func presentFullSheet() {
+        guard let host else { return }
+        if document.sheetID == nil, let id = pinnedSheetID { open(id, focus: false) }
+        fullSheetPresentation = host.notchSurface.presentExpandedSurface(
+            ExpandedSurfacePresentationRequest(surfaceID: Self.fullSheetSurface, opensShelf: true)
+        )
+        if fullSheetPresentation != nil {
+            focusEditor()
+        } else {
+            host.log.info("full-sheet mode: the host refused the surface")
+        }
+    }
+
+    func dismissFullSheet() {
+        host?.notchSurface.dismissExpandedSurface(Self.fullSheetSurface)
     }
 }

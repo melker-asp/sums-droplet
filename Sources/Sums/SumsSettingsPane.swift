@@ -102,7 +102,7 @@ struct SumsSettingsPane: View {
                     DropletControlRow(
                         title: "Keyboard shortcuts",
                         icon: "keyboard",
-                        infoTip: "Open Sums (⌃⌥S) and New quick calc (⌃⌥N) can be changed in Droppy's Shortcuts settings."
+                        infoTip: "Open Sums (⌃⌥S), New quick calc (⌃⌥N) and Quick calc in the notch (⌃⌥Space) can be changed in Droppy's Shortcuts settings."
                     ) {
                         EmptyView()
                     }

@@ -16,13 +16,15 @@
     "global-shortcuts",
     "clipboard-write",
     "lock-screen",
-    "network-client"
+    "network-client",
+    "expanded-surface"
   ],
   "surfaces": [
     "shelf-widget",
     "hud",
     "settings-pane",
-    "lock-screen-status"
+    "lock-screen-status",
+    "expanded-surface"
   ],
   "icon": "Sums.icon",
   "creator": {
