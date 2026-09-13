@@ -180,3 +180,24 @@ Droppy itself only loads droplets the Store review signed, which is why the Play
 exists. When the droplet is done: replace the placeholder icon and creator avatar, fill in
 `creator` and `source` in `droplet.json`, push the repository, and run `droppykit submit`. It
 opens getdroppy.app/submit-droplet with the repository, commit and id filled in.
+
+## Sums notes
+
+- **Build with `./Scripts/build-droplet.sh`, not `droppykit build` or `droppykit_build`.**
+  Sums links SoulverCore, a closed-source dynamic xcframework. The script is the SDK's
+  build script with changes marked `SUMS:`: it links SoulverCore and embeds it in
+  `Contents/Frameworks`. The SDK's own build stops at link time with undefined symbols.
+  `droppykit validate`, `run -- --shots` and installing into Playground work as usual.
+- **Tests:** `swift test`. They cover the engine (totals, statistics, `prev`, inputs,
+  copies as plain numbers), every template, Markdown masking, export and the store.
+- **Engine:** `SheetEngine` wraps SoulverCore's `LineCollection`. SoulverCore has no
+  words for "the lines above", so `Aggregate` lines (`total`, `average`, `std dev`…)
+  and `prev` are filled in after a first pass with `setExpression` and evaluated again.
+  `MarkdownMask` blanks list markers, code and tables before SoulverCore sees a sheet.
+- **Number format decides parsing, not just display:** `8 500` is 8500 only when a space
+  groups thousands. Templates are written Swedish-style and converted on creation.
+- **Editor layout:** `SumsTextView` reacts to width changes only, and never reassigns
+  identical exclusion paths; `CalculatorEditor.sizeThatFits` fills its proposal. Either
+  mistake starts a layout loop that pins a core (the harness hangs on `--shots`).
+- **Licensing:** SoulverCore is free for personal use. Publishing needs Soulver's
+  licence (they offer a free one with attribution); ask them before submitting.

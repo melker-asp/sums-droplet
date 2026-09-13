@@ -7,17 +7,29 @@ import AppKit
 import DroppyKit
 import SwiftUI
 
-/// The sheet editor: text on the left, each line's answer on the right.
+/// What the editor asks of the droplet.
+struct EditorActions {
+    var textChanged: @MainActor (String) -> Void
+    /// The caret location and the lines the selection covers.
+    var selectionChanged: @MainActor (Int, IndexSet) -> Void
+    var copyAnswer: @MainActor (LineResult) -> Void
+    var focusChanged: @MainActor (Bool) -> Void
+    var back: @MainActor () -> Void
+    var newSheet: @MainActor () -> Void
+}
+
+/// The worksheet editor: styled Markdown on the left, each line's answer on
+/// the right.
 ///
 /// AppKit rather than SwiftUI's `TextEditor`, because the answer column has to
 /// line up with lines that wrap, which needs the layout manager's geometry.
 struct CalculatorEditor: NSViewRepresentable {
-    @ObservedObject var sheet: SheetModel
+    @ObservedObject var document: SheetDocument
     /// Bumped by the droplet to ask for keyboard focus.
     let focusRequest: Int
-    let onCopy: (LineResult) -> Void
-    let onFocusChange: (Bool) -> Void
-    let onFocusReport: (String) -> Void
+    /// Caret location to restore when a sheet opens.
+    let restoreSelection: Int?
+    let actions: EditorActions
 
     func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
 
@@ -25,14 +37,11 @@ struct CalculatorEditor: NSViewRepresentable {
         let coordinator = context.coordinator
         let textView = SumsTextView(usingTextLayoutManager: false)
         textView.configureForSums()
-        textView.string = sheet.text
-        textView.results = sheet.results
         textView.delegate = coordinator
-        textView.onCopy = { [weak coordinator] in coordinator?.parent.onCopy($0) }
-        textView.onFocusChange = { [weak coordinator] focused, status in
-            coordinator?.parent.onFocusChange(focused)
-            coordinator?.parent.onFocusReport(status)
-        }
+        textView.onCopy = { [weak coordinator] in coordinator?.parent.actions.copyAnswer($0) }
+        textView.onFocusChange = { [weak coordinator] in coordinator?.parent.actions.focusChanged($0) }
+        textView.onBack = { [weak coordinator] in coordinator?.parent.actions.back() }
+        textView.onNewSheet = { [weak coordinator] in coordinator?.parent.actions.newSheet() }
 
         let scrollView = NSScrollView()
         scrollView.drawsBackground = false
@@ -44,23 +53,53 @@ struct CalculatorEditor: NSViewRepresentable {
         return scrollView
     }
 
+    /// The editor fills whatever it is offered. Left to SwiftUI, sizing would
+    /// measure the scroll view's content, which the text layout keeps
+    /// changing, and layout would never settle.
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSScrollView, context: Context) -> CGSize? {
+        CGSize(width: proposal.width ?? 300, height: proposal.height ?? 120)
+    }
+
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
-        context.coordinator.parent = self
+        let coordinator = context.coordinator
+        coordinator.parent = self
         guard let textView = scrollView.documentView as? SumsTextView else { return }
 
-        if textView.string != sheet.text {
-            textView.string = sheet.text
+        coordinator.isUpdating = true
+        defer { coordinator.isUpdating = false }
+
+        var needsRestyle = false
+        if coordinator.sheetID != document.sheetID {
+            // A different sheet: new text, the caret where it was left, and
+            // no undo history from the previous sheet.
+            coordinator.sheetID = document.sheetID
+            textView.string = document.text
+            textView.undoManager?.removeAllActions()
+            let location = min(restoreSelection ?? 0, (document.text as NSString).length)
+            textView.setSelectedRange(NSRange(location: location, length: 0))
+            textView.scrollRangeToVisible(NSRange(location: location, length: 0))
+            needsRestyle = true
+        } else if textView.string != document.text {
+            // Changed from outside the editor, by an input field.
+            let selection = textView.selectedRange()
+            textView.string = document.text
+            let length = (document.text as NSString).length
+            textView.setSelectedRange(NSRange(location: min(selection.location, length), length: 0))
+            needsRestyle = true
         }
-        if textView.results != sheet.results {
-            textView.results = sheet.results
+        if textView.results != document.results {
+            textView.results = document.results
         }
-        if focusRequest != context.coordinator.lastFocusRequest {
-            context.coordinator.lastFocusRequest = focusRequest
-            let report = onFocusReport
+        if needsRestyle || coordinator.tokens != document.tokens {
+            coordinator.tokens = document.tokens
+            textView.restyle(tokens: document.tokens)
+        }
+        if focusRequest != coordinator.lastFocusRequest {
+            coordinator.lastFocusRequest = focusRequest
             Task { @MainActor in
                 // Let the shelf finish presenting before asking for key.
                 try? await Task.sleep(for: .milliseconds(150))
-                report(textView.takeFocus())
+                textView.takeFocus()
             }
         }
     }
@@ -69,33 +108,68 @@ struct CalculatorEditor: NSViewRepresentable {
     final class Coordinator: NSObject, NSTextViewDelegate {
         var parent: CalculatorEditor
         var lastFocusRequest = 0
+        var sheetID: UUID?
+        var tokens: [[SyntaxToken]] = []
+        /// True while SwiftUI is pushing state into the view, when changes
+        /// the view reports back are echoes rather than the user's.
+        var isUpdating = false
 
         init(parent: CalculatorEditor) {
             self.parent = parent
         }
 
         func textDidChange(_ notification: Notification) {
-            guard let textView = notification.object as? NSTextView else { return }
-            parent.sheet.update(text: textView.string)
+            guard !isUpdating, let textView = notification.object as? NSTextView else { return }
+            parent.actions.textChanged(textView.string)
+        }
+
+        func textViewDidChangeSelection(_ notification: Notification) {
+            guard !isUpdating, let textView = notification.object as? NSTextView else { return }
+            let range = textView.selectedRange()
+            let text = textView.string as NSString
+            var lines = IndexSet()
+            if range.length > 0 {
+                let first = Self.lineIndex(at: range.location, in: text)
+                let last = Self.lineIndex(at: NSMaxRange(range) - 1, in: text)
+                lines = IndexSet(integersIn: first...last)
+            }
+            parent.actions.selectionChanged(range.location, lines)
+        }
+
+        private static func lineIndex(at location: Int, in text: NSString) -> Int {
+            var count = 0
+            var cursor = 0
+            let end = min(location, text.length)
+            while cursor < end {
+                let found = text.range(of: "\n", range: NSRange(location: cursor, length: end - cursor))
+                guard found.location != NSNotFound else { break }
+                count += 1
+                cursor = NSMaxRange(found)
+            }
+            return count
         }
     }
 }
 
-/// A plain-text view that reserves a right-hand column and draws each line's
-/// answer in it, level with the first line fragment of that line.
+/// A plain-text view that styles its Markdown, reserves a right-hand column,
+/// and draws each line's answer in it, level with the line.
 final class SumsTextView: NSTextView {
     var results: [LineResult] = [] {
-        didSet { resizeAnswerColumn() }
+        didSet {
+            resizeAnswerColumn()
+            window?.invalidateCursorRects(for: self)
+        }
     }
-    var onCopy: ((LineResult) -> Void)?
-    var onFocusChange: ((Bool, String) -> Void)?
+    var onCopy: (@MainActor (LineResult) -> Void)?
+    var onFocusChange: (@MainActor (Bool) -> Void)?
+    var onBack: (@MainActor () -> Void)?
+    var onNewSheet: (@MainActor () -> Void)?
 
-    private let bodyFont = NSFont.systemFont(ofSize: 13)
     private let answerFont = NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .semibold)
     private var answerColumnWidth: CGFloat = 64
+    private let placeholder = "Type a note or a calculation…"
 
     func configureForSums() {
-        let primary = NSColor(AdaptiveColors.notchSurfacePrimaryText)
         isRichText = false
         importsGraphics = false
         allowsUndo = true
@@ -107,10 +181,10 @@ final class SumsTextView: NSTextView {
         isContinuousSpellCheckingEnabled = false
         isGrammarCheckingEnabled = false
         smartInsertDeleteEnabled = false
-        font = bodyFont
-        textColor = primary
-        insertionPointColor = primary
-        typingAttributes = [.font: bodyFont, .foregroundColor: primary]
+        font = SheetStyler.bodyFont
+        textColor = SheetStyler.primary
+        insertionPointColor = SheetStyler.primary
+        typingAttributes = SheetStyler.typingAttributes
         textContainerInset = NSSize(width: 0, height: 2)
         textContainer?.lineFragmentPadding = 0
         textContainer?.widthTracksTextView = true
@@ -122,42 +196,64 @@ final class SumsTextView: NSTextView {
         autoresizingMask = [.width]
     }
 
-    // MARK: Focus
-
-    /// Tries to become the keyboard target and says what happened.
-    func takeFocus() -> String {
-        guard let window else { return "focus: no window" }
-        window.makeKey()
-        let accepted = window.makeFirstResponder(self)
-        return status(prefix: accepted ? "shortcut" : "shortcut refused")
+    /// Repaints Markdown and syntax colours. Skipped while an input method is
+    /// composing a character, which restyling would interrupt.
+    func restyle(tokens: [[SyntaxToken]]) {
+        guard let textStorage, !hasMarkedText() else { return }
+        SheetStyler.apply(to: textStorage, tokens: tokens)
+        typingAttributes = SheetStyler.typingAttributes
+        needsDisplay = true
     }
 
-    private func status(prefix: String) -> String {
-        guard let window else { return "\(prefix): no window" }
-        return "\(prefix): \(type(of: window)) key=\(window.isKeyWindow) canKey=\(window.canBecomeKey)"
+    // MARK: Focus and keys
+
+    func takeFocus() {
+        guard let window else { return }
+        window.makeKey()
+        window.makeFirstResponder(self)
     }
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     override func becomeFirstResponder() -> Bool {
         let became = super.becomeFirstResponder()
-        if became { onFocusChange?(true, status(prefix: "focused")) }
+        if became { onFocusChange?(true) }
         return became
     }
 
     override func resignFirstResponder() -> Bool {
         let resigned = super.resignFirstResponder()
-        if resigned { onFocusChange?(false, status(prefix: "resigned")) }
+        if resigned { onFocusChange?(false) }
         return resigned
+    }
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        if modifiers == .command, let key = event.charactersIgnoringModifiers {
+            switch key {
+            case "[":
+                onBack?()
+                return true
+            case "n":
+                onNewSheet?()
+                return true
+            default:
+                break
+            }
+        }
+        return super.performKeyEquivalent(with: event)
     }
 
     // MARK: Answer column
 
     override func setFrameSize(_ newSize: NSSize) {
+        let widthChanged = newSize.width != frame.width
         super.setFrameSize(newSize)
         // The column's cap is a share of the width, and the first results
-        // arrive before the view has any width at all.
-        resizeAnswerColumn()
+        // arrive before the view has any width at all. Only a new width
+        // matters: the height follows the text, so reacting to it would
+        // relay out the text, change the height, and go round forever.
+        if widthChanged { resizeAnswerColumn() }
     }
 
     override func didChangeText() {
@@ -180,9 +276,10 @@ final class SumsTextView: NSTextView {
         guard let textContainer else { return }
         let width = textContainer.size.width
         guard width > answerColumnWidth else { return }
-        textContainer.exclusionPaths = [
-            NSBezierPath(rect: NSRect(x: width - answerColumnWidth, y: 0, width: answerColumnWidth, height: 1_000_000))
-        ]
+        let column = NSRect(x: width - answerColumnWidth, y: 0, width: answerColumnWidth, height: 1_000_000)
+        // Assigning paths relays out all the text even when they are the same.
+        guard textContainer.exclusionPaths.first?.bounds != column else { return }
+        textContainer.exclusionPaths = [NSBezierPath(rect: column)]
     }
 
     /// Calls `body` with the rectangle of every non-empty answer, in view
@@ -207,14 +304,28 @@ final class SumsTextView: NSTextView {
         }
     }
 
+    private func answer(at point: NSPoint) -> LineResult? {
+        var hit: LineResult?
+        enumerateAnswers { rect, result in
+            if hit == nil, rect.contains(point) { hit = result }
+        }
+        return hit
+    }
+
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
+        if string.isEmpty {
+            (placeholder as NSString).draw(
+                at: textContainerOrigin,
+                withAttributes: [.font: SheetStyler.bodyFont, .foregroundColor: SheetStyler.tertiary]
+            )
+        }
         let style = NSMutableParagraphStyle()
         style.alignment = .right
         style.lineBreakMode = .byTruncatingTail
         let attributes: [NSAttributedString.Key: Any] = [
             .font: answerFont,
-            .foregroundColor: NSColor(AdaptiveColors.notchSurfacePrimaryText),
+            .foregroundColor: SheetStyler.primary,
             .paragraphStyle: style
         ]
         enumerateAnswers { rect, result in
@@ -223,16 +334,47 @@ final class SumsTextView: NSTextView {
         }
     }
 
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        enumerateAnswers { rect, _ in
+            addCursorRect(rect, cursor: .pointingHand)
+        }
+    }
+
+    // MARK: Clicks
+
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
-        var hit: LineResult?
-        enumerateAnswers { rect, result in
-            if hit == nil, rect.contains(point) { hit = result }
-        }
-        if let hit {
-            onCopy?(hit)
+        if let hit = answer(at: point) {
+            if event.modifierFlags.contains(.option) {
+                // ⌥-click puts the answer where the cursor is.
+                insertText(hit.formatted, replacementRange: selectedRange())
+            } else {
+                onCopy?(hit)
+            }
             return
         }
+        if toggleCheckbox(at: point) { return }
         super.mouseDown(with: event)
+    }
+
+    /// Ticks or unticks a `- [ ]` task when its box is clicked.
+    private func toggleCheckbox(at point: NSPoint) -> Bool {
+        let text = string as NSString
+        let index = characterIndexForInsertion(at: point)
+        guard index <= text.length else { return false }
+        let lineRange = text.lineRange(for: NSRange(location: min(index, text.length), length: 0))
+        let line = text.substring(with: lineRange)
+        guard let box = SheetStyler.checkboxRange(in: line) else { return false }
+        let boxRange = NSRange(location: lineRange.location + box.location, length: box.length)
+        // The insertion index is the nearest caret slot, so a click on the
+        // box lands on one of its edges or inside it.
+        guard index >= boxRange.location, index <= NSMaxRange(boxRange) else { return false }
+        let mark = NSRange(location: boxRange.location + 1, length: 1)
+        let replacement = text.substring(with: mark) == " " ? "x" : " "
+        guard shouldChangeText(in: mark, replacementString: replacement) else { return false }
+        textStorage?.replaceCharacters(in: mark, with: replacement)
+        didChangeText()
+        return true
     }
 }

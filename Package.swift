@@ -41,6 +41,10 @@ let package = Package(
                     "-Xlinker", "-rpath", "-Xlinker", "@executable_path/../../../x86_64-apple-macosx/debug"
                 ])
             ]
+        ),
+        .testTarget(
+            name: "SumsTests",
+            dependencies: ["Sums"]
         )
     ]
 )

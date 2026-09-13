@@ -14,11 +14,14 @@
     "shelf-write",
     "hud",
     "global-shortcuts",
-    "clipboard-write"
+    "clipboard-write",
+    "lock-screen"
   ],
   "surfaces": [
     "shelf-widget",
-    "hud"
+    "hud",
+    "settings-pane",
+    "lock-screen-status"
   ],
   "icon": "Sums.icon",
   "creator": {
