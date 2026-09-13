@@ -260,7 +260,7 @@ private struct SheetRow: View {
 
     var body: some View {
         HStack(spacing: DroppySpacing.sm) {
-            Image(systemName: isPinned ? "pin.fill" : "doc.text")
+            Image(systemName: isPinned ? "pin.fill" : sheet.isShared == true ? "globe" : "doc.text")
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(tertiaryText)
                 .frame(width: 14)
@@ -296,6 +296,9 @@ private struct SheetRow: View {
             Button("Rename") { droplet.beginRename(sheet.id) }
             Button("Duplicate") { droplet.duplicate(sheet.id) }
             Button(isPinned ? "Unpin from card" : "Pin to card") { droplet.togglePin(sheet.id) }
+            Button(sheet.isShared == true ? "Stop sharing variables" : "Share variables with all sheets") {
+                droplet.toggleShared(sheet.id)
+            }
             Divider()
             Button("Delete", role: .destructive) { droplet.delete(sheet.id) }
         }
@@ -375,6 +378,9 @@ private struct SheetEditorView: View {
             if let id = document.sheetID {
                 Button("Duplicate") { droplet.duplicate(id) }
                 Button(droplet.settings.pinnedSheetID == id ? "Unpin from card" : "Pin to card") { droplet.togglePin(id) }
+                Button(store.sheet(id)?.isShared == true ? "Stop sharing variables" : "Share variables with all sheets") {
+                    droplet.toggleShared(id)
+                }
             }
             Menu("Export") {
                 ForEach(SheetExporter.Format.allCases) { format in

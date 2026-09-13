@@ -54,8 +54,12 @@ struct SumsSettings: Equatable {
     /// last sheet opened.
     var pinnedSheetID: UUID?
     var showsOnLockScreen = false
+    /// Daily rates from the European Central Bank instead of SoulverCore's
+    /// built-in table.
+    var usesLiveRates = true
 
     private enum Key {
+        static let usesLiveRates = "usesLiveRates"
         static let numberFormat = "numberFormat"
         static let decimals = "decimals"
         static let opensLastSheet = "opensLastSheet"
@@ -80,6 +84,9 @@ struct SumsSettings: Equatable {
         if let shows = preferences.value(forKey: Key.showsOnLockScreen, as: Bool.self) {
             settings.showsOnLockScreen = shows
         }
+        if let live = preferences.value(forKey: Key.usesLiveRates, as: Bool.self) {
+            settings.usesLiveRates = live
+        }
         return settings
     }
 
@@ -90,5 +97,6 @@ struct SumsSettings: Equatable {
         preferences.setValue(opensLastSheet, forKey: Key.opensLastSheet)
         preferences.setValue(pinnedSheetID?.uuidString, forKey: Key.pinnedSheetID)
         preferences.setValue(showsOnLockScreen, forKey: Key.showsOnLockScreen)
+        preferences.setValue(usesLiveRates, forKey: Key.usesLiveRates)
     }
 }

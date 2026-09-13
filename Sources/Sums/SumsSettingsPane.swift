@@ -37,6 +37,13 @@ struct SumsSettingsPane: View {
                         range: 0...8,
                         step: 1
                     )
+                    DropletSettingsDivider()
+                    DropletToggleRow(
+                        title: "Live currency rates",
+                        icon: "dollarsign.arrow.circlepath",
+                        subtitle: "Daily rates from the European Central Bank, including SEK. Off uses built-in rates.",
+                        isOn: droplet.binding(\.usesLiveRates)
+                    )
                 }
             }
             section("Shelf") {

@@ -15,7 +15,8 @@
     "hud",
     "global-shortcuts",
     "clipboard-write",
-    "lock-screen"
+    "lock-screen",
+    "network-client"
   ],
   "surfaces": [
     "shelf-widget",

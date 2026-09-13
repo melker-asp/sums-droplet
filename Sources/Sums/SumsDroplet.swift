@@ -6,6 +6,7 @@
 import AppKit
 import Combine
 import DroppyKit
+import SoulverCore
 import SwiftUI
 
 /// The class Droppy's loader instantiates, named in the bundle's
@@ -57,6 +58,13 @@ public final class SumsDroplet: NSObject, ObservableObject, Droplet {
     private var toastTask: Task<Void, Never>?
     private var cancellables = Set<AnyCancellable>()
     private let lockScreenSubject = CurrentValueSubject<LockScreenStatusEntry?, Never>(nil)
+    /// Live rates from the European Central Bank, refreshed while Sums runs.
+    private let currencyRates = ECBCurrencyRateProvider()
+    private var hasLiveRates = false
+    private var ratesTask: Task<Void, Never>?
+    /// Set when a shared sheet changed, so the next navigation recomputes
+    /// the variables every sheet sees.
+    private var globalsAreStale = false
 
     private static let lastOpenedKey = "lastOpenedSheetID"
 
@@ -65,8 +73,6 @@ public final class SumsDroplet: NSObject, ObservableObject, Droplet {
     public func activate(host: DropletHost) throws {
         self.host = host
         settings = SumsSettings.load(from: host.preferences)
-        document.configure(settings)
-        summaryEngine.configure(settings)
         lastOpenedID = host.preferences.value(forKey: Self.lastOpenedKey, as: String.self).flatMap(UUID.init(uuidString:))
 
         let folder = host.environment.containerDirectory.appendingPathComponent("Sheets", isDirectory: true)
@@ -74,6 +80,8 @@ public final class SumsDroplet: NSObject, ObservableObject, Droplet {
             let guide = createSheet(from: Templates.quickGuide, opening: false)
             lastOpenedID = guide.id
         }
+        applyEngineConfiguration()
+        startRatesUpdates()
         if settings.opensLastSheet, let id = liveSheet(lastOpenedID) {
             open(id, focus: false)
         } else {
@@ -108,6 +116,8 @@ public final class SumsDroplet: NSObject, ObservableObject, Droplet {
         store.flush()
         toastTask?.cancel()
         toastTask = nil
+        ratesTask?.cancel()
+        ratesTask = nil
         cancellables.removeAll()
         lockScreenSubject.send(nil)
         _ = host?.shelf.setHoldsOpen(false)
@@ -118,6 +128,7 @@ public final class SumsDroplet: NSObject, ObservableObject, Droplet {
 
     func open(_ id: UUID, focus: Bool = true) {
         guard liveSheet(id) != nil else { return }
+        refreshGlobalsIfStale()
         document.open(id, text: store.text(id))
         route = .sheet(id)
         lastOpenedID = id
@@ -128,6 +139,7 @@ public final class SumsDroplet: NSObject, ObservableObject, Droplet {
 
     func showList() {
         document.close()
+        refreshGlobalsIfStale()
         route = .list
         _ = host?.shelf.setHoldsOpen(false)
     }
@@ -182,6 +194,15 @@ public final class SumsDroplet: NSObject, ObservableObject, Droplet {
         guard let id = document.sheetID else { return }
         document.update(text)
         store.updateText(id, text)
+        if store.sheet(id)?.isShared == true { globalsAreStale = true }
+    }
+
+    /// Shares a sheet's variables with every other sheet, or stops.
+    func toggleShared(_ id: UUID) {
+        let wasShared = store.sheet(id)?.isShared == true
+        store.setShared(id, !wasShared)
+        applyEngineConfiguration()
+        showToast(wasShared ? "This sheet's variables are its own again" : "Every sheet can now use these variables")
     }
 
     /// Writes a new value into the line an input field belongs to.
@@ -358,12 +379,61 @@ public final class SumsDroplet: NSObject, ObservableObject, Droplet {
         var updated = settings
         change(&updated)
         guard updated != settings else { return }
+        let ratesChanged = updated.usesLiveRates != settings.usesLiveRates
         settings = updated
         if let host { updated.save(to: host.preferences) }
-        document.configure(updated)
-        summaryEngine.configure(updated)
+        if ratesChanged { startRatesUpdates() }
+        applyEngineConfiguration()
+    }
+
+    // MARK: Engine configuration
+
+    /// Pushes settings, live rates and shared variables into every engine.
+    private func applyEngineConfiguration() {
+        let rates: (any CurrencyRateProvider)? = settings.usesLiveRates && hasLiveRates ? currencyRates : nil
+        let globals = sharedVariables()
+        document.configure(settings, currencyRates: rates, globals: globals)
+        summaryEngine.configure(settings, currencyRates: rates)
+        summaryEngine.setGlobals(globals)
         summaries.removeAll()
+        globalsAreStale = false
         publishLockScreen()
+    }
+
+    private func refreshGlobalsIfStale() {
+        if globalsAreStale { applyEngineConfiguration() }
+    }
+
+    /// The variables declared in shared sheets, with their answers.
+    private func sharedVariables() -> [(name: String, value: String)] {
+        let engine = SheetEngine(settings: settings)
+        var variables: [(name: String, value: String)] = []
+        for sheet in store.shared {
+            engine.evaluate(store.text(sheet.id))
+            variables += engine.declarations
+        }
+        return variables
+    }
+
+    /// Fetches rates now and every six hours while live rates are on.
+    private func startRatesUpdates() {
+        ratesTask?.cancel()
+        ratesTask = nil
+        guard settings.usesLiveRates else {
+            hasLiveRates = false
+            return
+        }
+        ratesTask = Task { [weak self, currencyRates] in
+            while !Task.isCancelled {
+                let updated = await currencyRates.updateRates()
+                guard !Task.isCancelled, let self else { return }
+                if updated {
+                    self.hasLiveRates = true
+                    self.applyEngineConfiguration()
+                }
+                try? await Task.sleep(for: .seconds(6 * 60 * 60))
+            }
+        }
     }
 
     // MARK: Lock screen

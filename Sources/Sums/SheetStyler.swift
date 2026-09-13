@@ -87,10 +87,10 @@ enum SheetStyler {
         storage.beginEditing()
         storage.setAttributes(typingAttributes, range: NSRange(location: 0, length: length))
 
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
         var offset = 0
         var inCodeFence = false
-        for (lineIndex, substring) in text.split(separator: "\n", omittingEmptySubsequences: false).enumerated() {
-            let line = String(substring)
+        for (lineIndex, line) in lines.enumerated() {
             let content = NSRange(location: offset, length: line.utf16.count)
             offset = NSMaxRange(content) + 1
             guard NSMaxRange(content) <= length else { break }
@@ -101,6 +101,10 @@ enum SheetStyler {
                 storage.addAttributes([.font: codeFont, .foregroundColor: tertiary], range: content)
             } else if inCodeFence {
                 storage.addAttributes([.font: codeFont, .foregroundColor: secondary], range: content)
+            } else if SheetSyntax.isTableLine(line) {
+                let isHeader = lineIndex + 1 < lines.count && SheetSyntax.isTableSeparator(lines[lineIndex + 1])
+                styleTableRow(line, at: content.location, isHeader: isHeader, in: storage)
+                styleInline(line, at: content.location, in: storage)
             } else {
                 styleLine(line, at: content.location, in: storage)
                 if lineIndex < tokens.count {
@@ -110,9 +114,67 @@ enum SheetStyler {
                     }
                 }
                 styleInline(line, at: content.location, in: storage)
+                styleSheetSyntax(line, at: content.location, in: storage)
             }
         }
         storage.endEditing()
+    }
+
+    /// How tall a chart line is, leaving room for the chart beside its words.
+    static let chartLineHeight: CGFloat = 76
+
+    // MARK: Sums syntax
+
+    /// Anchors fade into the margin; references read as chips; a chart line
+    /// makes room for its chart.
+    private static func styleSheetSyntax(_ line: String, at offset: Int, in storage: NSTextStorage) {
+        func global(_ range: NSRange) -> NSRange { NSRange(location: offset + range.location, length: range.length) }
+        if let anchor = SheetSyntax.anchor(in: line) {
+            storage.addAttributes([.foregroundColor: tertiary, .font: NSFont.systemFont(ofSize: 11)], range: global(anchor.range))
+        }
+        let keyword = color(for: .keyword)
+        for reference in SheetSyntax.references(in: line) {
+            storage.addAttributes([
+                .foregroundColor: keyword,
+                .backgroundColor: keyword.withAlphaComponent(0.16)
+            ], range: global(reference.range))
+        }
+        if SheetSyntax.chartKind(of: line) != nil {
+            let style = NSMutableParagraphStyle()
+            style.lineSpacing = 2
+            style.minimumLineHeight = chartLineHeight
+            storage.addAttributes([
+                .paragraphStyle: style,
+                .foregroundColor: keyword
+            ], range: global(NSRange(location: 0, length: (line as NSString).length)))
+        }
+    }
+
+    /// Pipes fade, the header row is bold, and a statistic row's keyword is
+    /// coloured like `total` elsewhere.
+    private static func styleTableRow(_ line: String, at offset: Int, isHeader: Bool, in storage: NSTextStorage) {
+        let text = line as NSString
+        let whole = NSRange(location: offset, length: text.length)
+        if SheetSyntax.isTableSeparator(line) {
+            storage.addAttribute(.foregroundColor, value: tertiary, range: whole)
+            return
+        }
+        if isHeader {
+            storage.addAttribute(.font, value: NSFont.systemFont(ofSize: 13, weight: .semibold), range: whole)
+        }
+        var search = NSRange(location: 0, length: text.length)
+        while true {
+            let pipe = text.range(of: "|", range: search)
+            guard pipe.location != NSNotFound else { break }
+            storage.addAttribute(.foregroundColor, value: tertiary, range: NSRange(location: offset + pipe.location, length: 1))
+            search = NSRange(location: NSMaxRange(pipe), length: text.length - NSMaxRange(pipe))
+        }
+        if let first = SheetSyntax.cells(of: line).first, Aggregate.statistic(named: first) != nil {
+            let word = text.range(of: first)
+            if word.location != NSNotFound {
+                storage.addAttribute(.foregroundColor, value: color(for: .keyword), range: NSRange(location: offset + word.location, length: word.length))
+            }
+        }
     }
 
     // MARK: Block styles

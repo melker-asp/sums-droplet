@@ -19,7 +19,16 @@ enum MarkdownMask {
         var inCodeFence = false
         return text
             .components(separatedBy: "\n")
-            .map { line in
+            .map { original in
+                // A line's `^anchor` names it for references; the engine
+                // never sees it.
+                var line = original
+                if let anchor = SheetSyntax.anchor(in: line) {
+                    line = (line as NSString).replacingCharacters(
+                        in: anchor.range,
+                        with: String(repeating: " ", count: anchor.range.length)
+                    )
+                }
                 let trimmed = line.trimmingCharacters(in: .whitespaces)
                 if trimmed.hasPrefix("```") || trimmed.hasPrefix("~~~") {
                     inCodeFence.toggle()

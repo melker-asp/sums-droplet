@@ -16,6 +16,8 @@ struct SheetInfo: Codable, Identifiable, Equatable {
     var deleted: Date?
     /// Caret location to restore when the sheet reopens (UTF-16 offset).
     var selection: Int?
+    /// Whether the sheet's variables are available in every other sheet.
+    var isShared: Bool?
 }
 
 /// Every sheet, on disk in the droplet's container.
@@ -200,6 +202,16 @@ final class SheetStore: ObservableObject {
         try? FileManager.default.removeItem(at: textURL(id))
         indexIsDirty = true
         scheduleSave()
+    }
+
+    func setShared(_ id: UUID, _ shared: Bool) {
+        modify(id) { $0.isShared = shared ? true : nil }
+        revision += 1
+    }
+
+    /// Live sheets whose variables every other sheet can use.
+    var shared: [SheetInfo] {
+        active.filter { $0.isShared == true }
     }
 
     func rememberSelection(_ id: UUID, _ location: Int) {
