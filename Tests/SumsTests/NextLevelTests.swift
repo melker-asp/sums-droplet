@@ -64,6 +64,11 @@ private func swedish() -> SheetEngine {
         let nested = SheetSyntax.functionCalls(in: "npv(8%; (100 + 50); 200)", commaSeparates: true)
         #expect(nested.first?.arguments == ["8%", "(100 + 50)", "200"])
         #expect(SheetSyntax.functionCalls(in: "npv(8%, 1,5)", commaSeparates: false).first?.arguments == ["8%, 1,5"])
+        // With semicolons, commas are thousands separators, even in English.
+        #expect(SheetSyntax.functionCalls(in: "npv(8%; 3,000; 4,000)", commaSeparates: true).first?.arguments
+                == ["8%", "3,000", "4,000"])
+        #expect(SheetSyntax.functionCalls(in: "npv(8%, 300, 400)", commaSeparates: true).first?.arguments
+                == ["8%", "300", "400"])
         #expect(SheetSyntax.functionCalls(in: "happy(1)", commaSeparates: true).isEmpty)
     }
 

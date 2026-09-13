@@ -76,25 +76,36 @@ enum SheetSyntax {
                 index += 1
                 continue
             }
-            // Find the matching bracket, splitting arguments at depth one.
+            // Find the matching bracket, noting where arguments could split
+            // at depth one. Semicolons win: when a call has them, its commas
+            // belong to the numbers (1,000 or 1,5).
             var depth = 0
-            var argumentStart = open + 1
-            var arguments: [String] = []
+            var semicolons: [Int] = []
+            var commas: [Int] = []
             var close: Int?
             var cursor = open
             while cursor < characters.count {
                 let character = characters[cursor]
-                if character == 0x28 { depth += 1 }            // (
-                else if character == 0x29 {                    // )
+                if character == 0x28 {                         // (
+                    depth += 1
+                } else if character == 0x29 {                  // )
                     depth -= 1
                     if depth == 0 { close = cursor; break }
-                } else if depth == 1, character == 0x3B || (commaSeparates && character == 0x2C) { // ; ,
-                    arguments.append(string(characters[argumentStart..<cursor]))
-                    argumentStart = cursor + 1
+                } else if depth == 1, character == 0x3B {      // ;
+                    semicolons.append(cursor)
+                } else if depth == 1, character == 0x2C {      // ,
+                    commas.append(cursor)
                 }
                 cursor += 1
             }
             guard let close else { break }
+            let splits = !semicolons.isEmpty ? semicolons : (commaSeparates ? commas : [])
+            var arguments: [String] = []
+            var argumentStart = open + 1
+            for split in splits {
+                arguments.append(string(characters[argumentStart..<split]))
+                argumentStart = split + 1
+            }
             arguments.append(string(characters[argumentStart..<close]))
             let start = open - name.utf16.count
             calls.append(FunctionCall(

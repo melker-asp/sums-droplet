@@ -285,6 +285,12 @@ public final class SumsDroplet: NSObject, ObservableObject, Droplet {
         showToast("Copied \(result.formatted)")
     }
 
+    /// Copies text exactly as shown, such as an answer with its unit.
+    func copyText(_ text: String, message: String) {
+        guard let host, host.workspace.copyToPasteboard(text) else { return }
+        showToast(message)
+    }
+
     func copySheet() {
         guard let host else { return }
         let text = SheetExporter.plainText(lines: document.lines, results: document.results)

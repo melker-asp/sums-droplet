@@ -336,10 +336,13 @@ private struct SheetEditorView: View {
                     document: document,
                     focusRequest: isPreview ? 0 : droplet.focusRequest,
                     restoreSelection: document.sheetID.flatMap { store.sheet($0)?.selection },
+                    decimalSeparator: droplet.settings.numberFormat.decimalSeparator,
                     actions: EditorActions(
                         textChanged: { droplet.editorChanged($0) },
                         selectionChanged: { droplet.selectionChanged(location: $0, lines: $1) },
                         copyAnswer: { droplet.copy($0) },
+                        copyText: { droplet.copyText($0, message: $1) },
+                        showMessage: { droplet.showToast($0) },
                         focusChanged: { droplet.editorFocusChanged($0) },
                         back: { commitTitle(); droplet.showList() },
                         newSheet: { droplet.showNewSheet() }

@@ -50,29 +50,52 @@ enum Templates {
         hours = 7,5
         invoice = hourly rate × hours
 
-        ## Totals
-        Rent: 8 500 kr
+        ## Totals and charts
+        Rent: 8 500 kr ^rent
         Food: 3 200 kr
         Transport: 970 kr
         total
-        Also: average, median, std dev, count, min, max.
-        Totals count the lines above, back to a blank line or heading.
+        chart above
+        Totals, averages, medians, std dev, count, min and max cover the lines above, back to a blank line or heading.
+
+        ## References
+        Half the rent: @rent / 2
+        ⌥-click an answer to refer to its line. Its ^name keeps the link when lines move.
+
+        ## Finance
+        loan = 2 000 000 kr
+        monthly payment = pmt(4% / 12; 30 × 12; loan)
+        npv(8%; 3 000; 4 000; 5 000)
+        irr(-10 000; 3 000; 4 000; 5 000)
+        Also fv and pv. Separate arguments with ;
+
+        ## Tables
+        | Item | Amount |
+        |---|---|
+        | Rent | 8 500 kr |
+        | Food | 3 200 kr |
+        | total | |
+        Paste cells from Excel and they become a table like this.
 
         ## Statistics
         average of 12, 15, 9, 22
         median of 12, 15, 9, 22
         standard deviation of 12, 15, 9, 22
 
-        ## Dates, times and units
+        ## Dates, times, units and money
         08:15 to 16:40
         days until 24 dec
         50 km in miles
+        100 EUR in SEK
         10 / 3 to 2 dp
 
         ## Tips
-        - Click an answer to copy it. ⌥-click puts it at the cursor.
+        - Hover an answer to copy it, name it or refer to it. Click copies; drag it into another app.
+        - ⌘-drag a number sideways to change it and watch everything follow.
         - Select lines to see their sum, average, median and std dev.
         - prev is the answer on the line above: prev × 2
+        - Start typing a name and press Tab to complete it.
+        - Share a sheet's variables with every sheet from its ⋯ menu.
         - The sliders button turns variables into input fields.
         - **Markdown** works: # headings, - lists, - [ ] tasks, `code`, ==highlight==
         - ⌘N new sheet, ⌘[ back to the list, ⌘⌫ deletes the selected sheet.
