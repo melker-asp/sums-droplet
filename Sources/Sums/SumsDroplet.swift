@@ -3,6 +3,7 @@
 //  Sums
 //
 
+import AppKit
 import Combine
 import DroppyKit
 import SwiftUI
@@ -16,29 +17,81 @@ public final class SumsPrincipal: NSObject, DropletPrincipal {
     @MainActor public func makeDroplet() -> AnyObject { SumsDroplet() }
 }
 
-/// Sums.
+/// Sums: a notepad calculator on the shelf.
 @MainActor
 public final class SumsDroplet: NSObject, ObservableObject, Droplet {
     /// Must equal `DroppyDropletID` in the bundle's Info.plist and `id` in
     /// droplet.json. The loader refuses the bundle if the three disagree.
     public nonisolated static let id: DropletID = "sums"
+    static let widgetID: ShelfWidgetID = "sums"
+
+    /// The sheet on the shelf. One for now; named sheets come later.
+    let sheet = SheetModel()
+
+    /// Bumped to ask the editor to take keyboard focus.
+    @Published private(set) var focusRequest = 0
+
+    /// What the editor saw the last time focus moved. Spike diagnostics,
+    /// shown in the header until keyboard focus is settled.
+    @Published var focusStatus = "not focused yet"
 
     private var host: DropletHost?
 
     public func activate(host: DropletHost) throws {
         self.host = host
-        host.log.info("Sums activated")
+        sheet.update(text: SheetModel.sample)
+
+        host.shortcuts.register(
+            id: "open",
+            title: "Open Sums",
+            defaultShortcut: DropletKeyboardShortcut(
+                keyCode: 1, // S
+                modifiers: NSEvent.ModifierFlags([.control, .option]).rawValue
+            )
+        ) { [weak self] in
+            self?.summon()
+        }
     }
 
     public func deactivate() {
-        // Everything activate() started is torn down here. Swift cannot unload
-        // code, so anything left running keeps running until Droppy relaunches.
+        // Everything activate() started is torn down here. The shortcut is
+        // unregistered by the host; the hold is ours to release.
+        _ = host?.shelf.setHoldsOpen(false)
         host = nil
     }
 
-    /// What the widget's control does. Replace it with the real action.
-    public func refresh() {
-        host?.log.info("Sums refreshed")
+    /// Opens the shelf on Sums and puts the cursor in the sheet.
+    func summon() {
+        guard let host else { return }
+        let opened = host.shelf.open(revealing: Self.widgetID)
+        host.log.info("summon: shelf.open returned \(opened)")
+        focusRequest += 1
+    }
+
+    /// Copies an answer and says so in the notch.
+    func copy(_ result: LineResult) {
+        guard let host, host.workspace.copyToPasteboard(result.raw) else { return }
+        let shown = result.formatted
+        let presented = host.hud.present(
+            DropletHUDRequest(id: "sums.copied", duration: 1.5, accessibilityLabel: "Copied \(shown)") {
+                HStack(spacing: 0) {
+                    Image(systemName: "doc.on.doc")
+                        .font(.system(size: DroppyLiveActivityMetrics.iconSize, weight: .semibold))
+                    Spacer(minLength: 0)
+                    Text(verbatim: shown)
+                        .font(.system(size: DroppyLiveActivityMetrics.labelFontSize, weight: .semibold))
+                        .monospacedDigit()
+                }
+                .frame(maxWidth: .infinity)
+                .foregroundStyle(AdaptiveColors.notchSurfacePrimaryText)
+            }
+        )
+        host.log.info("copy: hud presented \(presented)")
+    }
+
+    /// Keeps the shelf open while the user is typing in the sheet.
+    func editorFocusChanged(_ focused: Bool) {
+        _ = host?.shelf.setHoldsOpen(focused)
     }
 }
 
@@ -48,77 +101,88 @@ extension SumsDroplet: ShelfWidgetProviding {
     public var widgetDescriptors: [ShelfWidgetDescriptor] {
         [
             ShelfWidgetDescriptor(
-                id: "sums",
+                id: Self.widgetID,
                 title: "Sums",
-                systemImage: "drop.fill",
+                systemImage: "sum",
                 layoutTraits: ShelfWidgetLayoutTraits(
-                    // The CARD, in points at the Regular shelf size: the area
-                    // your view draws in, which is what the harness shows.
-                    // Droppy adds its own chrome around it. Both widths are
-                    // required; Droppy refuses a descriptor that leaves
-                    // either to a host fallback. The height is clamped to
-                    // 48 through 480 and holds in a paired row too.
                     preferredSoloWidth: 420,
                     preferredPairedWidth: 210,
-                    contentHeight: .fixed(150)
-                )
+                    contentHeight: .fixed(170)
+                ),
+                focusPolicy: .keyboardFocusable,
+                searchKeywords: ["calculator", "notepad", "soulver", "math", "vat"]
             )
         ]
     }
 
     public func makeWidgetView(_ id: ShelfWidgetID, context: ShelfWidgetContext) -> AnyView {
-        AnyView(SumsWidget(droplet: self, context: context))
+        AnyView(SumsWidget(droplet: self, sheet: sheet, context: context))
     }
 
     public func makeWidgetSettingsPopover(_ id: ShelfWidgetID) -> AnyView? { nil }
 }
 
-/// The widget.
-///
-/// Solo and paired are different compositions, not one view at two widths.
-/// Branch on `context.isCompact`, never on a width comparison.
-///
-/// The layout is the one every Droppy widget shares (Design guidelines):
-/// no card or border, the content straight on the shelf; one padding,
-/// `context.contentInsets`, which is the host's own inset for this slot and
-/// is zero under a notch, and nothing on top of it; the root
-/// fills the rectangle; a header row of symbol and title with the widget's
-/// control at its trailing end; leading text, trailing numbers; buttons are
-/// Droppy's Liquid Glass disc and pill, never a wash of your own.
+// MARK: - HUD
+
+extension SumsDroplet: HUDPresenting {}
+
+/// The widget. Solo is the editor; paired shows the bottom-most answer.
 private struct SumsWidget: View {
     @ObservedObject var droplet: SumsDroplet
+    @ObservedObject var sheet: SheetModel
     let context: ShelfWidgetContext
 
     var body: some View {
         VStack(alignment: .leading, spacing: DroppySpacing.sm) {
-            HStack(spacing: DroppySpacing.xsm) {
-                Image(systemName: "drop.fill")
-                    .font(.system(size: 12, weight: .medium))
-                Text("Sums")
-                    .font(.system(size: 12, weight: .semibold))
-                Spacer(minLength: 0)
-                if !context.isCompact {
-                    // The widget's one control: the same Liquid Glass disc the
-                    // File Tray puts on an item.
-                    Button {
-                        droplet.refresh()
-                    } label: {
-                        Image(systemName: "arrow.clockwise")
-                    }
-                    .buttonStyle(DroppyCircleButtonStyle(size: 20))
-                    .help("Refresh")
-                    .accessibilityLabel("Refresh")
-                }
+            header
+            if context.isCompact {
+                compact
+            } else {
+                editor
             }
-            .foregroundStyle(AdaptiveColors.notchSurfaceSecondaryText)
-
-            Text(context.isCompact ? "Compact" : "Standalone")
-                .font(.system(size: 22, weight: .semibold, design: .rounded))
-                .foregroundStyle(AdaptiveColors.notchSurfacePrimaryText)
-
-            Spacer(minLength: 0)
         }
         .padding(context.contentInsets)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private var header: some View {
+        HStack(spacing: DroppySpacing.xsm) {
+            Image(systemName: "sum")
+                .font(.system(size: 12, weight: .medium))
+            Text("Sums")
+                .font(.system(size: 12, weight: .semibold))
+            Spacer(minLength: 0)
+            if !context.isCompact {
+                Text(verbatim: droplet.focusStatus)
+                    .font(.system(size: 10))
+                    .lineLimit(1)
+            }
+        }
+        .foregroundStyle(AdaptiveColors.notchSurfaceSecondaryText)
+    }
+
+    private var editor: some View {
+        CalculatorEditor(
+            sheet: sheet,
+            focusRequest: context.isPreview ? 0 : droplet.focusRequest,
+            onCopy: { droplet.copy($0) },
+            onFocusChange: { droplet.editorFocusChanged($0) },
+            onFocusReport: { droplet.focusStatus = $0 }
+        )
+    }
+
+    private var compact: some View {
+        VStack(alignment: .leading, spacing: DroppySpacing.xs) {
+            Text(verbatim: sheet.lastResult?.formatted ?? "–")
+                .font(.system(size: 22, weight: .semibold, design: .rounded))
+                .monospacedDigit()
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
+                .foregroundStyle(AdaptiveColors.notchSurfacePrimaryText)
+            Text(verbatim: sheet.lastExpression ?? "Empty sheet")
+                .font(.system(size: 11))
+                .lineLimit(1)
+                .foregroundStyle(AdaptiveColors.notchSurfaceTertiaryText)
+        }
     }
 }

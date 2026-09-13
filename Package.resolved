@@ -1,5 +1,5 @@
 {
-  "originHash" : "3da58c91f81ea26cea0cc0e3102636059432cad8b540619bb1a9fd7910c562ae",
+  "originHash" : "3b1fc9bd28e8a51b293e35a03be1e3bbf0c5e58dea90cd1ed58a97d5877b1a38",
   "pins" : [
     {
       "identity" : "droppykit",
@@ -8,6 +8,15 @@
       "state" : {
         "revision" : "dc45e32a2ea9f4dcf41ab9a6e6574c8e761079f0",
         "version" : "1.7.0"
+      }
+    },
+    {
+      "identity" : "soulvercore",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/soulverteam/SoulverCore",
+      "state" : {
+        "revision" : "27952744e06b3e1b2c3f695138054548b8ac5796",
+        "version" : "3.5.1"
       }
     }
   ],

@@ -2,28 +2,34 @@
   "id": "sums",
   "name": "Sums",
   "version": "1.0.0",
-  "summary": "One line about Sums",
-  "description": "A longer description, in plain paragraphs.",
+  "summary": "A notepad that does the math as you type",
+  "description": "Sums is a notepad calculator on your shelf. Write notes in Markdown and mix in calculations in plain language: every line that holds math gets its answer in a column on the right.\n\nIt understands percentages and VAT, averages, medians and standard deviations, compound interest, variables and units, powered by SoulverCore. Click an answer to copy it.",
   "category": "Productivity",
   "kit": {
     "abi": 1,
     "minAPI": "1.6.0"
   },
   "minAppVersion": "15.3.0",
-  "capabilities": [],
+  "capabilities": [
+    "shelf-write",
+    "hud",
+    "global-shortcuts",
+    "clipboard-write"
+  ],
   "surfaces": [
-    "shelf-widget"
+    "shelf-widget",
+    "hud"
   ],
   "icon": "Sums.icon",
   "creator": {
-    "name": "Your name",
+    "name": "melker-asp",
     "kind": "community",
-    "url": "https://example.com",
+    "url": "https://github.com/melker-asp",
     "avatar": "Creator.png"
   },
   "source": {
-    "repository": "https://github.com/you/sums",
+    "repository": "https://github.com/melker-asp/sums-droplet",
     "license": "MIT"
   },
-  "keywords": []
+  "keywords": ["calculator", "notepad", "soulver", "math", "vat", "markdown"]
 }
